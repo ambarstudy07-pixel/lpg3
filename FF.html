@@ -40,6 +40,7 @@
 
         // Configuration
         const SPREADSHEET_ID = '1Iq_vJ3XWknrJKav23LOu28YNdPDgNZE5rTlLKynW8j4';
+        // Using a direct export link with forced no-cache
         const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=0`;
         const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#ec4899'];
 
@@ -53,8 +54,7 @@
                     }
                 };
                 updateIcon();
-                // Fallback interval if lucide isn't ready immediately
-                const interval = setInterval(updateIcon, 500);
+                const interval = setInterval(updateIcon, 1000);
                 return () => clearInterval(interval);
             }, [name, size, className]);
             return <span dangerouslySetInnerHTML={{ __html: iconSvg }} />;
@@ -72,21 +72,28 @@
                 setLoading(true);
                 setError(null);
                 try {
-                    // Added cache buster to URL to ensure fresh data
-                    const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
-                    if (!response.ok) throw new Error('Network response was not ok');
+                    // Using fetch with cache: "no-store" to bypass proxy issues
+                    const response = await fetch(`${CSV_URL}&cachebust=${Date.now()}`, {
+                        cache: "no-store"
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}. Ensure the sheet is Published to Web as CSV.`);
+                    }
+                    
                     const csvText = await response.text();
                     
+                    if (!csvText || csvText.includes('<!DOCTYPE html>')) {
+                        throw new Error('Received HTML instead of CSV. Please check Google Sheet Publish settings.');
+                    }
+
                     Papa.parse(csvText, {
                         header: true,
                         dynamicTyping: true,
                         skipEmptyLines: true,
                         complete: (results) => {
-                            if (results.errors.length > 0) {
-                                console.warn("Parsing errors:", results.errors);
-                            }
                             const processed = results.data
-                                .filter(row => row['Agency Name/ID']) // Ensure valid rows
+                                .filter(row => row['Agency Name/ID'])
                                 .map(row => ({
                                     date: row['Date of Entry'],
                                     omc: row['OMC Name'] || 'Unknown',
@@ -101,17 +108,22 @@
                                     total_received: (Number(row['Total Cylinders Received today (Domestic - 14.2 KG)']) || 0) + (Number(row['Total Cylinders Received today (Commercial - 19 KG)']) || 0) + (Number(row['Total Cylinders Received today (Industrial - 47.5 KG)']) || 0),
                                     total_distributed: (Number(row['Total Cylinders Distributed today (Domestic- 14.2 KG)']) || 0) + (Number(row['Total Cylinders Distributed today (Commercial- 19 KG)']) || 0) + (Number(row['Total Cylinders Distributed today (Industrial- 47.5 KG)']) || 0),
                                 }));
+                            
+                            if (processed.length === 0) {
+                                throw new Error('No data found in the spreadsheet.');
+                            }
+
                             setData(processed);
-                            if (processed.length > 0 && !selectedAgency) setSelectedAgency(processed[0].agency);
+                            if (!selectedAgency) setSelectedAgency(processed[0].agency);
                             setLoading(false);
                         },
                         error: (err) => { 
-                            setError(`CSV Parsing Failed: ${err.message}`); 
+                            setError(`CSV Parsing Error: ${err.message}`); 
                             setLoading(false); 
                         }
                     });
                 } catch (e) {
-                    setError(`Failed to fetch spreadsheet: ${e.message}`);
+                    setError(e.message);
                     setLoading(false);
                 }
             };
@@ -164,7 +176,7 @@
                     <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md border border-red-100">
                         <LucideIcon name="AlertCircle" size={48} className="text-red-500 mx-auto mb-4" />
                         <h2 className="text-2xl font-black text-slate-800 mb-2">Sync Error</h2>
-                        <p className="text-slate-500 mb-6">{error}</p>
+                        <p className="text-slate-500 mb-6 text-sm">{error}</p>
                         <button onClick={fetchData} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg">
                             Retry Connection
                         </button>
